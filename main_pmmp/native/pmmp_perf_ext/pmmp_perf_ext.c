@@ -801,6 +801,196 @@ PHP_FUNCTION(pmmp_perf_decode_packet_batch_callback)
 	RETURN_LONG(packet_index);
 }
 
+PHP_FUNCTION(pmmp_perf_bitset_or)
+{
+	zend_string *a;
+	zend_string *b;
+	size_t length;
+	size_t i;
+	zend_string *out;
+	const unsigned char *a_bytes;
+	const unsigned char *b_bytes;
+	unsigned char *out_bytes;
+
+	ZEND_PARSE_PARAMETERS_START(2, 2)
+		Z_PARAM_STR(a)
+		Z_PARAM_STR(b)
+	ZEND_PARSE_PARAMETERS_END();
+
+	length = ZSTR_LEN(a);
+	if(ZSTR_LEN(b) != length){
+		zend_argument_value_error(2, "must have the same length as argument #1 ($a)");
+		RETURN_THROWS();
+	}
+	if(length == 0){
+		RETURN_EMPTY_STRING();
+	}
+
+	out = zend_string_alloc(length, 0);
+	a_bytes = (const unsigned char *) ZSTR_VAL(a);
+	b_bytes = (const unsigned char *) ZSTR_VAL(b);
+	out_bytes = (unsigned char *) ZSTR_VAL(out);
+	for(i = 0; i < length; ++i){
+		out_bytes[i] = a_bytes[i] | b_bytes[i];
+	}
+	ZSTR_VAL(out)[length] = '\0';
+	RETURN_STR(out);
+}
+
+PHP_FUNCTION(pmmp_perf_bitset_andnot)
+{
+	zend_string *a;
+	zend_string *b;
+	size_t length;
+	size_t i;
+	zend_string *out;
+	const unsigned char *a_bytes;
+	const unsigned char *b_bytes;
+	unsigned char *out_bytes;
+
+	ZEND_PARSE_PARAMETERS_START(2, 2)
+		Z_PARAM_STR(a)
+		Z_PARAM_STR(b)
+	ZEND_PARSE_PARAMETERS_END();
+
+	length = ZSTR_LEN(a);
+	if(ZSTR_LEN(b) != length){
+		zend_argument_value_error(2, "must have the same length as argument #1 ($a)");
+		RETURN_THROWS();
+	}
+	if(length == 0){
+		RETURN_EMPTY_STRING();
+	}
+
+	out = zend_string_alloc(length, 0);
+	a_bytes = (const unsigned char *) ZSTR_VAL(a);
+	b_bytes = (const unsigned char *) ZSTR_VAL(b);
+	out_bytes = (unsigned char *) ZSTR_VAL(out);
+	for(i = 0; i < length; ++i){
+		out_bytes[i] = a_bytes[i] & (unsigned char) ~b_bytes[i];
+	}
+	ZSTR_VAL(out)[length] = '\0';
+	RETURN_STR(out);
+}
+
+PHP_FUNCTION(pmmp_perf_bitset_count)
+{
+	static const unsigned char bit_counts[256] = {
+		0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4,
+		1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,
+		1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,
+		2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,
+		1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,
+		2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,
+		2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,
+		3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,
+		1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,
+		2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,
+		2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,
+		3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,
+		2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,
+		3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,
+		3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,
+		4,5,5,6,5,6,6,7,5,6,6,7,6,7,7,8
+	};
+	zend_string *bitset;
+	const unsigned char *bytes;
+	size_t length;
+	size_t i;
+	zend_long count = 0;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+		Z_PARAM_STR(bitset)
+	ZEND_PARSE_PARAMETERS_END();
+
+	bytes = (const unsigned char *) ZSTR_VAL(bitset);
+	length = ZSTR_LEN(bitset);
+	for(i = 0; i < length; ++i){
+		count += bit_counts[bytes[i]];
+	}
+
+	RETURN_LONG(count);
+}
+
+PHP_FUNCTION(pmmp_perf_decode_packet_headers)
+{
+	zend_string *batch;
+	const unsigned char *data;
+	size_t length;
+	size_t offset = 0;
+	zend_long packet_index = 0;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+		Z_PARAM_STR(batch)
+	ZEND_PARSE_PARAMETERS_END();
+
+	data = (const unsigned char *) ZSTR_VAL(batch);
+	length = ZSTR_LEN(batch);
+	array_init_size(return_value, 8);
+
+	while(offset < length){
+		size_t packet_length = 0;
+		uint32_t length_shift = 0;
+		size_t length_offset = offset;
+		size_t payload_offset;
+		size_t packet_id = 0;
+		uint32_t id_shift = 0;
+		size_t id_length = 0;
+		unsigned char byte;
+		zval header;
+
+		do{
+			if(offset >= length){
+				zend_value_error("Truncated VarInt length at packet " ZEND_LONG_FMT, packet_index);
+				zval_ptr_dtor(return_value);
+				RETURN_THROWS();
+			}
+			if(length_shift >= 35){
+				zend_value_error("VarInt length too large at packet " ZEND_LONG_FMT, packet_index);
+				zval_ptr_dtor(return_value);
+				RETURN_THROWS();
+			}
+			byte = data[offset++];
+			packet_length |= ((size_t) (byte & 0x7f)) << length_shift;
+			length_shift += 7;
+		}while((byte & 0x80) != 0);
+
+		if(packet_length > length - offset){
+			zend_value_error("Packet " ZEND_LONG_FMT " length exceeds remaining batch data", packet_index);
+			zval_ptr_dtor(return_value);
+			RETURN_THROWS();
+		}
+
+		payload_offset = offset;
+		do{
+			if(id_length >= packet_length){
+				zend_value_error("Packet " ZEND_LONG_FMT " has truncated packet ID", packet_index);
+				zval_ptr_dtor(return_value);
+				RETURN_THROWS();
+			}
+			if(id_shift >= 35){
+				zend_value_error("Packet ID too large at packet " ZEND_LONG_FMT, packet_index);
+				zval_ptr_dtor(return_value);
+				RETURN_THROWS();
+			}
+			byte = data[payload_offset + id_length++];
+			packet_id |= ((size_t) (byte & 0x7f)) << id_shift;
+			id_shift += 7;
+		}while((byte & 0x80) != 0);
+
+		array_init_size(&header, 5);
+		add_assoc_long(&header, "offset", (zend_long) payload_offset);
+		add_assoc_long(&header, "length", (zend_long) packet_length);
+		add_assoc_long(&header, "packetId", (zend_long) packet_id);
+		add_assoc_long(&header, "idLength", (zend_long) id_length);
+		add_assoc_long(&header, "frameLength", (zend_long) (payload_offset - length_offset + packet_length));
+		add_next_index_zval(return_value, &header);
+
+		offset += packet_length;
+		++packet_index;
+	}
+}
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_pmmp_perf_varint_prefix_length, 0, 1, IS_LONG, 0)
 	ZEND_ARG_TYPE_INFO(0, length, IS_LONG, 0)
 ZEND_END_ARG_INFO()
@@ -861,6 +1051,24 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_pmmp_perf_decode_packet_batch_ca
 	ZEND_ARG_TYPE_INFO(0, callback, IS_CALLABLE, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_pmmp_perf_bitset_or, 0, 2, IS_STRING, 0)
+	ZEND_ARG_TYPE_INFO(0, a, IS_STRING, 0)
+	ZEND_ARG_TYPE_INFO(0, b, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_pmmp_perf_bitset_andnot, 0, 2, IS_STRING, 0)
+	ZEND_ARG_TYPE_INFO(0, a, IS_STRING, 0)
+	ZEND_ARG_TYPE_INFO(0, b, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_pmmp_perf_bitset_count, 0, 1, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, bitset, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_pmmp_perf_decode_packet_headers, 0, 1, IS_ARRAY, 0)
+	ZEND_ARG_TYPE_INFO(0, batch, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
 static const zend_function_entry pmmp_perf_ext_functions[] = {
 	PHP_FE(pmmp_perf_varint_prefix_length, arginfo_pmmp_perf_varint_prefix_length)
 	PHP_FE(pmmp_perf_build_info, arginfo_pmmp_perf_build_info)
@@ -875,6 +1083,10 @@ static const zend_function_entry pmmp_perf_ext_functions[] = {
 	PHP_FE(pmmp_perf_read_fast_paletted_array, arginfo_pmmp_perf_read_fast_paletted_array)
 	PHP_FE(pmmp_perf_decode_packet_batch, arginfo_pmmp_perf_decode_packet_batch)
 	PHP_FE(pmmp_perf_decode_packet_batch_callback, arginfo_pmmp_perf_decode_packet_batch_callback)
+	PHP_FE(pmmp_perf_bitset_or, arginfo_pmmp_perf_bitset_or)
+	PHP_FE(pmmp_perf_bitset_andnot, arginfo_pmmp_perf_bitset_andnot)
+	PHP_FE(pmmp_perf_bitset_count, arginfo_pmmp_perf_bitset_count)
+	PHP_FE(pmmp_perf_decode_packet_headers, arginfo_pmmp_perf_decode_packet_headers)
 	PHP_FE_END
 };
 

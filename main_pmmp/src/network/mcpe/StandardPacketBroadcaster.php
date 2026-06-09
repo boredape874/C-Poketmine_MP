@@ -33,12 +33,74 @@ use function spl_object_id;
 use function strlen;
 
 final class StandardPacketBroadcaster implements PacketBroadcaster{
+	private static int $broadcastCalls = 0;
+	private static int $broadcastRecipients = 0;
+	private static int $broadcastPackets = 0;
+	private static int $encodedPackets = 0;
+	private static int $encodedPacketBytes = 0;
+	private static int $duplicateSerializationWork = 0;
+	private static int $sharedCompressedBatches = 0;
+	private static int $sharedCompressedRecipients = 0;
+	private static int $directBufferedPackets = 0;
+	private static int $directBufferedRecipients = 0;
+
 	public function __construct(
 		private Server $server
 	){}
 
+	public static function recordBroadcast(int $recipients, int $packets) : void{
+		++self::$broadcastCalls;
+		self::$broadcastRecipients += $recipients;
+		self::$broadcastPackets += $packets;
+		self::$duplicateSerializationWork += $recipients > 1 ? $packets * ($recipients - 1) : 0;
+	}
+
+	public static function recordEncodedPacket(int $bytes) : void{
+		++self::$encodedPackets;
+		self::$encodedPacketBytes += $bytes;
+	}
+
+	public static function recordSharedCompressedBatch(int $recipients) : void{
+		++self::$sharedCompressedBatches;
+		self::$sharedCompressedRecipients += $recipients;
+	}
+
+	public static function recordDirectBufferedPackets(int $recipients, int $packets) : void{
+		self::$directBufferedRecipients += $recipients;
+		self::$directBufferedPackets += $packets;
+	}
+
+	public static function getPerformanceMetrics() : array{
+		return [
+			'broadcast_calls' => self::$broadcastCalls,
+			'broadcast_recipients' => self::$broadcastRecipients,
+			'broadcast_packets' => self::$broadcastPackets,
+			'encoded_packets' => self::$encodedPackets,
+			'encoded_packet_bytes' => self::$encodedPacketBytes,
+			'duplicate_serialization_work' => self::$duplicateSerializationWork,
+			'shared_compressed_batches' => self::$sharedCompressedBatches,
+			'shared_compressed_recipients' => self::$sharedCompressedRecipients,
+			'direct_buffered_packets' => self::$directBufferedPackets,
+			'direct_buffered_recipients' => self::$directBufferedRecipients,
+		];
+	}
+
+	public static function resetPerformanceMetrics() : void{
+		self::$broadcastCalls = 0;
+		self::$broadcastRecipients = 0;
+		self::$broadcastPackets = 0;
+		self::$encodedPackets = 0;
+		self::$encodedPacketBytes = 0;
+		self::$duplicateSerializationWork = 0;
+		self::$sharedCompressedBatches = 0;
+		self::$sharedCompressedRecipients = 0;
+		self::$directBufferedPackets = 0;
+		self::$directBufferedRecipients = 0;
+	}
+
 	public function broadcastPackets(array $recipients, array $packets) : void{
-		if(count($recipients) === 0){
+		$recipientCount = count($recipients);
+		if($recipientCount === 0){
 			return;
 		}
 
@@ -55,6 +117,9 @@ final class StandardPacketBroadcaster implements PacketBroadcaster{
 				return;
 			}
 		}
+
+		$packetCount = count($packets);
+		self::recordBroadcast($recipientCount, $packetCount);
 
 		$compressors = [];
 
@@ -80,6 +145,7 @@ final class StandardPacketBroadcaster implements PacketBroadcaster{
 			for($remaining = $length; $remaining >= 128; $remaining >>= 7){
 				++$lengthPrefixLength;
 			}
+			self::recordEncodedPacket($length);
 			//varint length prefix + packet buffer
 			$totalLength += $lengthPrefixLength + $length;
 			$packetBuffers[] = $buffer;
@@ -97,10 +163,12 @@ final class StandardPacketBroadcaster implements PacketBroadcaster{
 				$batchBuffer = $stream->getData();
 
 				$batch = $this->server->prepareBatch($batchBuffer, $compressor, timings: Timings::$playerNetworkSendCompressBroadcast);
+				self::recordSharedCompressedBatch(count($compressorTargets));
 				foreach($compressorTargets as $target){
 					$target->queueCompressed($batch);
 				}
 			}else{
+				self::recordDirectBufferedPackets(count($compressorTargets), count($packetBuffers));
 				if(count($packetBuffers) === 1){
 					$packetBuffer = $packetBuffers[0];
 					foreach($compressorTargets as $target){

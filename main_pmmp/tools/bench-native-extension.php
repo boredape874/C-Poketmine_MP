@@ -68,6 +68,27 @@ if(!function_exists('pmmp_perf_decode_packet_batch_callback')){
 	 */
 	function pmmp_perf_decode_packet_batch_callback(string $batch, \Closure $callback) : int{ return 0; }
 }
+if(!function_exists('pmmp_perf_bitset_or')){
+	function pmmp_perf_bitset_or(string $a, string $b) : string{ return $a | $b; }
+}
+if(!function_exists('pmmp_perf_bitset_andnot')){
+	function pmmp_perf_bitset_andnot(string $a, string $b) : string{ return $a & ~$b; }
+}
+if(!function_exists('pmmp_perf_bitset_count')){
+	function pmmp_perf_bitset_count(string $bitset) : int{
+		$count = 0;
+		for($i = 0, $length = strlen($bitset); $i < $length; ++$i){
+			$count += substr_count(decbin(ord($bitset[$i])), '1');
+		}
+		return $count;
+	}
+}
+if(!function_exists('pmmp_perf_decode_packet_headers')){
+	/**
+	 * @return list<array{offset: int, length: int, packetId: int, idLength: int, frameLength: int}>
+	 */
+	function pmmp_perf_decode_packet_headers(string $batch) : array{ return []; }
+}
 
 $iterations = 5_000_000;
 $lengths = [0, 1, 127, 128, 255, 300, 16_384, 2_097_151, 268_435_455];
@@ -90,6 +111,23 @@ $batchPacketLengths = [24, 64, 128, 512];
 $batch = pmmp_perf_encode_packet_batch($batchPackets);
 $singlePacket = str_repeat('s', 160);
 $singlePacketLength = strlen($singlePacket);
+$bitsetA = str_repeat("\xaa", 4096);
+$bitsetB = str_repeat("\x0f", 4096);
+$expectedBitsetOr = $bitsetA | $bitsetB;
+$expectedBitsetAndNot = $bitsetA & ~$bitsetB;
+if(pmmp_perf_bitset_or($bitsetA, $bitsetB) !== $expectedBitsetOr){
+	throw new \RuntimeException('pmmp_perf_bitset_or mismatch');
+}
+if(pmmp_perf_bitset_andnot($bitsetA, $bitsetB) !== $expectedBitsetAndNot){
+	throw new \RuntimeException('pmmp_perf_bitset_andnot mismatch');
+}
+if(pmmp_perf_bitset_count("\xff\x00\x0f") !== 12){
+	throw new \RuntimeException('pmmp_perf_bitset_count mismatch');
+}
+$headers = pmmp_perf_decode_packet_headers($batch);
+if(count($headers) !== count($batchPackets) || $headers[0]['length'] !== strlen($batchPackets[0])){
+	throw new \RuntimeException('pmmp_perf_decode_packet_headers mismatch');
+}
 
 $start = hrtime(true);
 $nativeSum = 0;
@@ -227,6 +265,34 @@ for($i = 0; $i < $iterations; ++$i){
 }
 $callbackDecodeElapsed = (hrtime(true) - $start) / 1_000_000_000;
 
+$start = hrtime(true);
+$bitsetOrBytes = 0;
+for($i = 0; $i < $iterations; ++$i){
+	$bitsetOrBytes += strlen(pmmp_perf_bitset_or($bitsetA, $bitsetB));
+}
+$bitsetOrElapsed = (hrtime(true) - $start) / 1_000_000_000;
+
+$start = hrtime(true);
+$bitsetAndNotBytes = 0;
+for($i = 0; $i < $iterations; ++$i){
+	$bitsetAndNotBytes += strlen(pmmp_perf_bitset_andnot($bitsetA, $bitsetB));
+}
+$bitsetAndNotElapsed = (hrtime(true) - $start) / 1_000_000_000;
+
+$start = hrtime(true);
+$bitsetCounts = 0;
+for($i = 0; $i < $iterations; ++$i){
+	$bitsetCounts += pmmp_perf_bitset_count($bitsetA);
+}
+$bitsetCountElapsed = (hrtime(true) - $start) / 1_000_000_000;
+
+$start = hrtime(true);
+$decodedHeaderCount = 0;
+for($i = 0; $i < $iterations; ++$i){
+	$decodedHeaderCount += count(pmmp_perf_decode_packet_headers($batch));
+}
+$decodeHeadersElapsed = (hrtime(true) - $start) / 1_000_000_000;
+
 echo json_encode([
 	'iterations' => $iterations,
 	'native_sum' => $nativeSum,
@@ -250,6 +316,11 @@ echo json_encode([
 	'decode_packets_per_second' => $decodedPackets / $decodeElapsed,
 	'callback_decode_packet_batches_per_second' => $iterations / $callbackDecodeElapsed,
 	'callback_decode_packets_per_second' => $callbackDecodedPackets / $callbackDecodeElapsed,
+	'bitset_or_batches_per_second' => $iterations / $bitsetOrElapsed,
+	'bitset_andnot_batches_per_second' => $iterations / $bitsetAndNotElapsed,
+	'bitset_count_batches_per_second' => $iterations / $bitsetCountElapsed,
+	'decode_packet_headers_batches_per_second' => $iterations / $decodeHeadersElapsed,
+	'decode_packet_headers_per_second' => $decodedHeaderCount / $decodeHeadersElapsed,
 	'signed_varint_bytes' => $signedBytes,
 	'encoded_batch_bytes' => $encodedBatchBytes,
 	'encoded_batch_with_lengths_bytes' => $encodedBatchWithLengthsBytes,
@@ -265,6 +336,10 @@ echo json_encode([
 	'fast_paletted_array_php_bytes' => $fastPalettedArrayPhpBytes,
 	'decoded_packets' => $decodedPackets,
 	'callback_decoded_packets' => $callbackDecodedPackets,
+	'bitset_or_bytes' => $bitsetOrBytes,
+	'bitset_andnot_bytes' => $bitsetAndNotBytes,
+	'bitset_counts' => $bitsetCounts,
+	'decoded_packet_headers' => $decodedHeaderCount,
 	'native_seconds' => $nativeElapsed,
 	'php_seconds' => $phpElapsed,
 	'signed_varint_seconds' => $signedElapsed,
@@ -282,4 +357,8 @@ echo json_encode([
 	'fast_paletted_array_php_seconds' => $fastPalettedArrayPhpElapsed,
 	'decode_seconds' => $decodeElapsed,
 	'callback_decode_seconds' => $callbackDecodeElapsed,
+	'bitset_or_seconds' => $bitsetOrElapsed,
+	'bitset_andnot_seconds' => $bitsetAndNotElapsed,
+	'bitset_count_seconds' => $bitsetCountElapsed,
+	'decode_headers_seconds' => $decodeHeadersElapsed,
 ], JSON_PRETTY_PRINT) . "\n";
