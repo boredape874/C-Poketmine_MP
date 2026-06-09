@@ -1,0 +1,5 @@
+ARG_ENABLE("pmmp_perf_ext", "Enable PMMP performance extension", "no");
+
+if (PHP_PMMP_PERF_EXT !== "no") {
+	EXTENSION("pmmp_perf_ext", "pmmp_perf_ext.c");
+}

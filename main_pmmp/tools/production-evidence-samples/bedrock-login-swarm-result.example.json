@@ -1,0 +1,11 @@
+{
+  "attempted_players": 400,
+  "successful_logins": 400,
+  "chunk_ready_players": 400,
+  "disconnects": 0,
+  "fatal_log_matches": 0,
+  "duration_seconds": 600,
+  "loss_percent": 0.0,
+  "tool": "external-bedrock-swarm",
+  "notes": "Replace this sample with a real external Bedrock login and chunk-ready swarm result before registering evidence."
+}
